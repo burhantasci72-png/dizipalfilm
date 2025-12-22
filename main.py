@@ -5,7 +5,7 @@ from datetime import datetime
 
 def get_current_domain():
     # Burayı senin çalışan kodunla değiştirebilirsin
-    return "https://dizipal738.com" 
+    return "https://dizipal1223.com" 
 
 def scrape_dizipal():
     base_url = get_current_domain()
