@@ -1,73 +1,711 @@
 import requests
 from bs4 import BeautifulSoup
+import time
+import json
+import html
+from urllib.parse import urlparse
 import os
 from datetime import datetime
 
-def get_current_domain():
-    # Burayı senin çalışan kodunla değiştirebilirsin
-    return "https://dizipal1223.com" 
-
-def scrape_dizipal():
-    base_url = get_current_domain()
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    movies = []
+def get_soup(url):
+    """Verilen URL'den sayfa içeriğini çeker ve BeautifulSoup nesnesi olarak döndürür."""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
     try:
-        response = requests.get(base_url, headers=headers, timeout=15)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        # Sitedeki yapıya göre burayı güncellemen gerekebilir
-        items = soup.select('.video-block') or soup.select('.post-item') or soup.find_all('div', class_='articleBody')
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        return BeautifulSoup(response.content, 'html.parser')
+    except requests.RequestException as e:
+        print(f"❌ Hata: {url} adresine erişilemiyor. Hata mesajı: {e}")
+        return None
 
-        for item in items:
-            try:
-                title = item.find('h3').text.strip() if item.find('h3') else "Film Adı Yok"
-                link = item.find('a')['href'] if item.find('a') else "#"
-                img = item.find('img')['src'] if item.find('img') else ""
-                
-                movies.append({'title': title, 'link': link, 'image': img})
-            except:
-                continue
+def get_film_info(film_element, base_domain):
+    """Bir film elementinden gerekli bilgileri ayıklar."""
+    try:
+        title_element = film_element.find('span', class_='title')
+        title = html.unescape(title_element.text.strip()) if title_element else "Başlık Bulunamadı"
+        
+        image_element = film_element.find('img')
+        image = image_element['src'] if image_element else ""
+        
+        url_element = film_element.find('a')
+        url = base_domain + url_element['href'] if url_element else ""
+        
+        year_element = film_element.find('span', class_='year')
+        year = html.unescape(year_element.text.strip()) if year_element else "Yıl Belirtilmemiş"
+        
+        duration_element = film_element.find('span', class_='duration')
+        duration = html.unescape(duration_element.text.strip()) if duration_element else "Süre Belirtilmemiş"
+        
+        imdb_element = film_element.find('span', class_='imdb')
+        imdb = html.unescape(imdb_element.text.strip()) if imdb_element else "IMDB Puanı Yok"
+        
+        genres_element = film_element.find('span', class_='genres_x')
+        genres = html.unescape(genres_element.text.strip()).split(', ') if genres_element else ["Tür Belirtilmemiş"]
+        
+        summary_element = film_element.find('span', class_='summary')
+        summary = html.unescape(summary_element.text.strip()) if summary_element else "Özet Mevcut Değil"
+        
+        return {
+            'title': title,
+            'image': image,
+            'videoUrl': "",
+            'url': url,
+            'year': year,
+            'duration': duration,
+            'imdb': imdb,
+            'genres': genres,
+            'summary': summary
+        }
     except Exception as e:
-        print(f"Bağlantı hatası: {e}")
-    return movies
+        print(f"⚠️ Hata: Film bilgileri alınamadı. Hata mesajı: {e}")
+        return None
 
-def create_html(movies):
-    now = datetime.now().strftime("%d.%m.%Y %H:%M")
-    html_template = f"""
-    <!DOCTYPE html>
-    <html lang="tr">
-    <head>
-        <meta charset="UTF-8">
-        <title>Dizipal Listesi</title>
-        <style>
-            body {{ background: #111; color: white; font-family: sans-serif; text-align: center; }}
-            .grid {{ display: flex; flex-wrap: wrap; justify-content: center; gap: 15px; }}
-            .card {{ width: 180px; background: #222; padding: 10px; border-radius: 10px; }}
-            img {{ width: 100%; height: 250px; border-radius: 5px; object-fit: cover; }}
-            a {{ color: #e50914; text-decoration: none; font-weight: bold; }}
-        </style>
-    </head>
-    <body>
-        <h1>Güncel Dizipal Filmleri</h1>
-        <p>Son Güncelleme: {now}</p>
-        <div class="grid">
-    """
-    if not movies:
-        html_template += "<p>Şu an film çekilemedi, site adresi değişmiş olabilir.</p>"
-    else:
-        for movie in movies:
-            html_template += f"""
-                <div class="card">
-                    <img src="{movie['image']}">
-                    <p style="font-size:12px;">{movie['title']}</p>
-                    <a href="{movie['link']}" target="_blank">İzle</a>
-                </div>
-            """
-    html_template += "</div></body></html>"
+def get_video_link(url):
+    """Bir film sayfasından video iframe linkini alır."""
+    soup = get_soup(url)
+    if not soup:
+        return None
+    iframe = soup.find('iframe', id='iframe')
+    if iframe and 'src' in iframe.attrs:
+        return iframe['src']
+    return None
+
+def load_more_movies(api_url, last_movie_id):
+    """API üzerinden daha fazla film yükler."""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    data = {
+        'movie': last_movie_id,
+        'year': '',
+        'tur': '',
+        'siralama': ''
+    }
+    try:
+        response = requests.post(api_url, headers=headers, data=data, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        print(f"⚠️ Hata: Daha fazla film yüklenirken bir sorun oluştu. Hata mesajı: {e}")
+        return None
+
+def get_films(base_url, max_films=500):
+    """Sitedeki filmleri çeker."""
+    films = []
     
-    with open("index.html", "w", encoding="utf-8") as f:
-        f.write(html_template)
+    parsed_uri = urlparse(base_url)
+    base_domain = f"{parsed_uri.scheme}://{parsed_uri.netloc}"
+    api_url = f"{base_domain}/api/load-movies"
+    
+    print(f"🚀 Başlangıç URL'si: {base_url}")
+    print(f"📡 API URL'si: {api_url}")
+
+    soup = get_soup(base_url)
+    if not soup:
+        return films
+
+    processed_film_titles = set()
+
+    while len(films) < max_films:
+        film_elements = soup.find_all('li', class_='')
+        
+        if not film_elements:
+            print("⚠️ Sayfada film elementi bulunamadı.")
+            break
+            
+        new_films_found_on_page = 0
+        for element in film_elements:
+            if len(films) >= max_films:
+                break
+                
+            film_info = get_film_info(element, base_domain)
+            if film_info and film_info['title'] not in processed_film_titles:
+                video_link = get_video_link(film_info['url'])
+                if video_link:
+                    film_info['videoUrl'] = video_link
+                    films.append(film_info)
+                    processed_film_titles.add(film_info['title'])
+                    new_films_found_on_page += 1
+                    print(f"✅ Film eklendi: {film_info['title']} (Toplam: {len(films)})")
+                time.sleep(0.5)  # Rate limiting
+        
+        if new_films_found_on_page == 0 and len(film_elements) > 0:
+            print("ℹ️ Tekrar eden filmler bulundu, son sayfaya ulaşıldı.")
+            break
+
+        if len(films) >= max_films:
+            break
+
+        last_movie_element = film_elements[-1].find('a')
+        if last_movie_element and 'data-id' in last_movie_element.attrs:
+            last_movie_id = last_movie_element['data-id']
+            print(f"⏳ Daha fazla film yükleniyor (Son ID: {last_movie_id})...")
+            more_movies_data = load_more_movies(api_url, last_movie_id)
+            if more_movies_data and more_movies_data.get('html'):
+                soup = BeautifulSoup(more_movies_data['html'], 'html.parser')
+            else:
+                print("ℹ️ Daha fazla film bulunamadı.")
+                break
+        else:
+            break
+
+        time.sleep(2)
+
+    return films
+
+def get_all_genres(films):
+    """Tüm filmlerden benzersiz türlerin bir listesini oluşturur."""
+    all_genres = set()
+    for film in films:
+        for genre in film.get('genres', []):
+            if genre != "Tür Belirtilmemiş":
+                all_genres.add(genre)
+    return sorted(list(all_genres))
+
+def create_html(films):
+    """Çekilen film verileriyle bir HTML dosyası oluşturur."""
+    all_genres = get_all_genres(films)
+    films_json = json.dumps(films, ensure_ascii=False, indent=2)
+    genres_json = json.dumps(all_genres, ensure_ascii=False, indent=2)
+    update_time = datetime.now().strftime("%d/%m/%Y %H:%M")
+    
+    html_template = f"""<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Film Arşivi - {len(films)} Film</title>
+    <meta name="description" content="Türkçe dublaj ve altyazılı film izleme platformu">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #fff;
+            min-height: 100vh;
+        }}
+        .header {{ 
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(26, 32, 44, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 1000;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }}
+        .logo {{ 
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        .logo h1 {{ 
+            font-size: 1.5em;
+            background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }}
+        .stats {{ 
+            background: rgba(102, 126, 234, 0.2);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+        }}
+        .controls {{ 
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }}
+        .search-container {{ 
+            position: relative;
+            transition: all 0.3s;
+        }}
+        #searchInput {{ 
+            padding: 10px 40px 10px 15px;
+            border: 2px solid rgba(102, 126, 234, 0.3);
+            border-radius: 25px;
+            background: rgba(26, 32, 44, 0.8);
+            color: #fff;
+            outline: none;
+            width: 250px;
+            transition: all 0.3s;
+        }}
+        #searchInput:focus {{ 
+            border-color: #667eea;
+            width: 300px;
+            box-shadow: 0 0 20px rgba(102, 126, 234, 0.3);
+        }}
+        #searchInput::placeholder {{ color: rgba(255,255,255,0.5); }}
+        .search-icon {{ 
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #667eea;
+            pointer-events: none;
+        }}
+        #genreSelect {{ 
+            padding: 10px 15px;
+            border: 2px solid rgba(102, 126, 234, 0.3);
+            border-radius: 25px;
+            background: rgba(26, 32, 44, 0.8);
+            color: #fff;
+            outline: none;
+            cursor: pointer;
+            transition: all 0.3s;
+        }}
+        #genreSelect:hover {{ 
+            border-color: #667eea;
+        }}
+        .film-container {{ 
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 20px;
+            margin-top: 100px;
+            padding: 20px;
+            max-width: 1400px;
+            margin-left: auto;
+            margin-right: auto;
+        }}
+        .film-card {{ 
+            position: relative;
+            overflow: hidden;
+            border-radius: 12px;
+            background: rgba(26, 32, 44, 0.6);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+        }}
+        .film-card:hover {{ 
+            transform: translateY(-10px) scale(1.02);
+            box-shadow: 0 12px 24px rgba(102, 126, 234, 0.4);
+        }}
+        .film-card img {{ 
+            width: 100%;
+            aspect-ratio: 2 / 3;
+            object-fit: cover;
+            display: block;
+        }}
+        .film-overlay {{ 
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to top, rgba(0,0,0,0.95), rgba(0,0,0,0));
+            padding: 30px 15px 15px;
+            transform: translateY(calc(100% - 60px));
+            transition: transform 0.3s ease;
+        }}
+        .film-card:hover .film-overlay {{ 
+            transform: translateY(0);
+        }}
+        .film-title {{ 
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 0.95em;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }}
+        .film-meta {{ 
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            font-size: 0.85em;
+            opacity: 0.8;
+        }}
+        .imdb-badge {{ 
+            background: #f5c518;
+            color: #000;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+        }}
+        .film-buttons {{ 
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }}
+        .btn {{ 
+            flex: 1;
+            padding: 8px 12px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85em;
+            font-weight: 600;
+            text-decoration: none;
+            color: #fff;
+            text-align: center;
+            transition: all 0.3s;
+        }}
+        .btn-info {{ 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }}
+        .btn-info:hover {{ 
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }}
+        .btn-watch {{ 
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }}
+        .btn-watch:hover {{ 
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(245, 87, 108, 0.4);
+        }}
+        #loadMore {{ 
+            display: block;
+            width: 200px;
+            margin: 30px auto;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            border: none;
+            border-radius: 30px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 600;
+            transition: all 0.3s;
+        }}
+        #loadMore:hover {{ 
+            transform: scale(1.05);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }}
+        .modal {{ 
+            display: none;
+            position: fixed;
+            z-index: 1001;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.8);
+            backdrop-filter: blur(10px);
+        }}
+        .modal-content {{ 
+            background: linear-gradient(135deg, rgba(26, 32, 44, 0.95), rgba(44, 62, 80, 0.95));
+            margin: 5% auto;
+            padding: 30px;
+            border-radius: 20px;
+            width: 90%;
+            max-width: 700px;
+            position: relative;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            animation: slideIn 0.3s ease;
+        }}
+        @keyframes slideIn {{
+            from {{ transform: translateY(-50px); opacity: 0; }}
+            to {{ transform: translateY(0); opacity: 1; }}
+        }}
+        .close {{ 
+            position: absolute;
+            top: 20px;
+            right: 25px;
+            font-size: 32px;
+            font-weight: bold;
+            cursor: pointer;
+            color: #fff;
+            transition: all 0.3s;
+        }}
+        .close:hover {{ 
+            color: #f5576c;
+            transform: rotate(90deg);
+        }}
+        #modalTitle {{ 
+            margin-top: 0;
+            margin-bottom: 15px;
+            font-size: 1.8em;
+            background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }}
+        .modal-info {{ 
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }}
+        .info-item {{ 
+            background: rgba(102, 126, 234, 0.1);
+            padding: 10px;
+            border-radius: 10px;
+            border-left: 3px solid #667eea;
+        }}
+        .info-label {{ 
+            font-size: 0.85em;
+            opacity: 0.7;
+            margin-bottom: 5px;
+        }}
+        .info-value {{ 
+            font-weight: 600;
+        }}
+        #modalSummary {{ 
+            line-height: 1.6;
+            margin-bottom: 25px;
+            opacity: 0.9;
+        }}
+        #modalWatchBtn {{ 
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            border: none;
+            border-radius: 12px;
+            color: #fff;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }}
+        #modalWatchBtn:hover {{ 
+            transform: scale(1.02);
+            box-shadow: 0 8px 24px rgba(245, 87, 108, 0.4);
+        }}
+        .footer {{ 
+            text-align: center;
+            padding: 30px 20px;
+            opacity: 0.7;
+            font-size: 0.9em;
+        }}
+        .update-info {{ 
+            background: rgba(102, 126, 234, 0.2);
+            padding: 10px;
+            border-radius: 10px;
+            margin-top: 10px;
+        }}
+        @media (max-width: 768px) {{
+            .film-container {{ 
+                grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+                gap: 15px;
+            }}
+            .header {{ 
+                flex-direction: column;
+                gap: 10px;
+            }}
+            .controls {{ 
+                flex-direction: column;
+                width: 100%;
+            }}
+            #searchInput {{ 
+                width: 100%;
+            }}
+            #searchInput:focus {{ 
+                width: 100%;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">
+            <h1>🎬 Film Arşivi</h1>
+            <span class="stats">📊 {len(films)} Film</span>
+        </div>
+        <div class="controls">
+            <select id="genreSelect" onchange="filterByGenre(this.value)">
+                <option value="">🎭 Tüm Türler</option>
+            </select>
+            <div class="search-container">
+                <input type="text" id="searchInput" placeholder="Film ara..." oninput="searchFilms()">
+                <span class="search-icon">🔍</span>
+            </div>
+        </div>
+    </div>
+    <div class="film-container" id="filmContainer"></div>
+    <button id="loadMore" onclick="loadMoreFilms()">Daha Fazla Yükle ⬇️</button>
+    <div id="filmModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h2 id="modalTitle"></h2>
+            <div class="modal-info">
+                <div class="info-item">
+                    <div class="info-label">Yıl</div>
+                    <div class="info-value" id="modalYear"></div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">IMDB</div>
+                    <div class="info-value" id="modalImdb"></div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Süre</div>
+                    <div class="info-value" id="modalDuration"></div>
+                </div>
+            </div>
+            <div class="info-item" style="margin-bottom: 20px;">
+                <div class="info-label">Türler</div>
+                <div class="info-value" id="modalGenres"></div>
+            </div>
+            <p id="modalSummary"></p>
+            <a id="modalWatchBtn" class="btn btn-watch" target="_blank">🎬 Filmi İzle</a>
+        </div>
+    </div>
+    <div class="footer">
+        <div>⚡ Otomatik olarak güncellenir</div>
+        <div class="update-info">Son Güncelleme: {update_time}</div>
+    </div>
+    <script>
+        const films = {films_json};
+        const allGenres = {genres_json};
+        let currentPage = 1;
+        const filmsPerPage = 24;
+        let currentFilter = {{ "genre": "", "search": "" }};
+
+        function populateGenreSelect() {{
+            const select = document.getElementById('genreSelect');
+            allGenres.forEach(genre => {{
+                const option = document.createElement('option');
+                option.value = genre;
+                option.textContent = genre;
+                select.appendChild(option);
+            }});
+        }}
+
+        function getFilteredFilms() {{
+            return films.filter(film => {{
+                const matchesGenre = currentFilter.genre ? film.genres.includes(currentFilter.genre) : true;
+                const searchLower = currentFilter.search.toLowerCase();
+                const matchesSearch = currentFilter.search ? 
+                    film.title.toLowerCase().includes(searchLower) || 
+                    film.genres.join(',').toLowerCase().includes(searchLower) : true;
+                return matchesGenre && matchesSearch;
+            }});
+        }}
+
+        function renderFilms() {{
+            const container = document.getElementById('filmContainer');
+            container.innerHTML = '';
+            currentPage = 1;
+            const filteredFilms = getFilteredFilms();
+
+            const filmsToRender = filteredFilms.slice(0, filmsPerPage);
+            filmsToRender.forEach(film => container.appendChild(createFilmCard(film)));
+
+            document.getElementById('loadMore').style.display = filteredFilms.length > filmsPerPage ? 'block' : 'none';
+        }}
+        
+        function createFilmCard(film) {{
+            const filmCard = document.createElement('div');
+            filmCard.className = 'film-card';
+            const filmTitle = film.title.replace(/'/g, "\\'");
+            const imdbScore = film.imdb.replace('IMDB: ', '');
+            filmCard.innerHTML = `
+                <img src="${{film.image}}" alt="${{filmTitle}}" loading="lazy" onerror="this.src='https://via.placeholder.com/300x450/1a202c/667eea?text=Film'">
+                <div class="film-overlay">
+                    <div class="film-title">${{film.title}}</div>
+                    <div class="film-meta">
+                        <span>${{film.year}}</span>
+                        ${{imdbScore !== 'Yok' ? '<span class="imdb-badge">⭐ ' + imdbScore + '</span>' : ''}}
+                    </div>
+                    <div class="film-buttons">
+                        <button class="btn btn-info" onclick='event.stopPropagation(); showDetails("${{filmTitle}}")'>ℹ️ Bilgi</button>
+                        <a href="${{film.videoUrl}}" class="btn btn-watch" target="_blank" onclick='event.stopPropagation();'>▶️ İzle</a>
+                    </div>
+                </div>
+            `;
+            filmCard.onclick = () => showDetails(film.title);
+            return filmCard;
+        }}
+
+        function searchFilms() {{
+            currentFilter.search = document.getElementById('searchInput').value;
+            renderFilms();
+        }}
+
+        function filterByGenre(genre) {{
+            currentFilter.genre = genre;
+            renderFilms();
+        }}
+
+        function showDetails(title) {{
+            const film = films.find(f => f.title === title);
+            if (film) {{
+                document.getElementById('modalTitle').textContent = film.title;
+                document.getElementById('modalYear').textContent = film.year;
+                document.getElementById('modalImdb').textContent = film.imdb.replace('IMDB: ', '');
+                document.getElementById('modalDuration').textContent = film.duration;
+                document.getElementById('modalGenres').textContent = film.genres.join(', ');
+                document.getElementById('modalSummary').textContent = film.summary;
+                document.getElementById('modalWatchBtn').href = film.videoUrl;
+                document.getElementById('filmModal').style.display = 'block';
+            }}
+        }}
+
+        function closeModal() {{
+            document.getElementById('filmModal').style.display = 'none';
+        }}
+
+        window.onclick = function(event) {{
+            const modal = document.getElementById('filmModal');
+            if (event.target == modal) {{
+                modal.style.display = "none";
+            }}
+        }}
+
+        function loadMoreFilms() {{
+            const filteredFilms = getFilteredFilms();
+            const startIndex = currentPage * filmsPerPage;
+            const endIndex = startIndex + filmsPerPage;
+            
+            const filmsToRender = filteredFilms.slice(startIndex, endIndex);
+            const container = document.getElementById('filmContainer');
+            filmsToRender.forEach(film => container.appendChild(createFilmCard(film)));
+
+            currentPage++;
+            if (endIndex >= filteredFilms.length) {{
+                document.getElementById('loadMore').style.display = 'none';
+            }}
+        }}
+
+        document.addEventListener("DOMContentLoaded", () => {{
+            populateGenreSelect();
+            renderFilms();
+            console.log(`✅ Toplam ${{films.length}} film yüklendi!`);
+        }});
+    </script>
+</body>
+</html>"""
+    return html_template
+
+def main():
+    base_url = os.environ.get('DIZIPAL_URL', 'https://dizipal1223.com/filmler')
+    max_films = int(os.environ.get('MAX_FILMS', 500))
+    
+    print(f"🎬 Film çekme işlemi başlıyor...")
+    print(f"🌐 URL: {base_url}")
+    print(f"📊 Maksimum film sayısı: {max_films}")
+    
+    films = get_films(base_url, max_films)
+    
+    if not films:
+        print("❌ Hiç film çekilemedi!")
+        return
+    
+    html_content = create_html(films)
+    
+    output_path = os.environ.get('OUTPUT_PATH', 'index.html')
+    try:
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+        print(f"\n✅ HTML dosyası başarıyla kaydedildi: {output_path}")
+        print(f"🎉 Toplam {len(films)} film çekildi!")
+        
+        # JSON çıktısı da oluştur
+        json_path = output_path.replace('.html', '.json')
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(films, f, ensure_ascii=False, indent=2)
+        print(f"📄 JSON dosyası kaydedildi: {json_path}")
+        
+    except Exception as e:
+        print(f"❌ Dosya kaydedilirken hata: {e}")
 
 if __name__ == "__main__":
-    data = scrape_dizipal()
-    create_html(data) # Boş olsa bile dosyayı oluşturur
-    print("İşlem tamamlandı.")
+    main()
