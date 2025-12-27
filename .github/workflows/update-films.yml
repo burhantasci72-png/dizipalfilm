@@ -1,0 +1,48 @@
+name: Film Güncelleme Botu
+
+on:
+  schedule:
+    # Her gün saat 03:00'te çalışır (UTC)
+    - cron: '0 3 * * *'
+  workflow_dispatch:  # Manuel tetikleme seçeneği
+  push:
+    branches:
+      - main
+
+jobs:
+  update-films:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Repository'yi çek
+      uses: actions/checkout@v4
+      
+    - name: 🐍 Python kurulumu
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: 📦 Bağımlılıkları yükle
+      run: |
+        pip install requests beautifulsoup4
+        
+    - name: 🎬 Filmleri çek ve HTML oluştur
+      env:
+        DIZIPAL_URL: ${{ secrets.DIZIPAL_URL || 'https://dizipal1223.com/filmler' }}
+        MAX_FILMS: 500
+        OUTPUT_PATH: index.html
+      run: |
+        python dizipal_scraper.py
+        
+    - name: 📊 İstatistikleri göster
+      run: |
+        echo "📈 Oluşturulan dosyalar:"
+        ls -lh *.html *.json 2>/dev/null || true
+        
+    - name: 💾 Değişiklikleri kaydet
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add -A
+        git diff --quiet && git diff --staged --quiet || (git commit -m "🎬 Film listesi güncellendi - $(date +'%Y-%m-%d %H:%M:%S')" && git push)
