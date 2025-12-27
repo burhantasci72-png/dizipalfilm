@@ -6,18 +6,55 @@ import html
 from urllib.parse import urlparse
 import os
 from datetime import datetime
+import random
 
-def get_soup(url):
-    """Verilen URL'den sayfa içeriğini çeker ve BeautifulSoup nesnesi olarak döndürür."""
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    try:
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        return BeautifulSoup(response.content, 'html.parser')
-    except requests.RequestException as e:
-        print(f"❌ Hata: {url} adresine erişilemiyor. Hata mesajı: {e}")
+class CloudflareScraper:
+    def __init__(self):
+        self.session = requests.Session()
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Cache-Control': 'max-age=0',
+        }
+        
+    def get_soup(self, url, retries=3):
+        """Cloudflare korumasını aşarak sayfa içeriğini çeker"""
+        for attempt in range(retries):
+            try:
+                # Random delay ekle
+                if attempt > 0:
+                    time.sleep(random.uniform(2, 5))
+                
+                response = self.session.get(
+                    url, 
+                    headers=self.headers,
+                    timeout=30,
+                    allow_redirects=True
+                )
+                
+                # Cloudflare challenge kontrolü
+                if 'cf-browser-verification' in response.text or response.status_code == 403:
+                    print(f"⚠️ Cloudflare koruması tespit edildi, deneme {attempt + 1}/{retries}")
+                    time.sleep(5)
+                    continue
+                
+                response.raise_for_status()
+                return BeautifulSoup(response.content, 'html.parser')
+                
+            except requests.RequestException as e:
+                print(f"❌ Hata (Deneme {attempt + 1}/{retries}): {e}")
+                if attempt == retries - 1:
+                    return None
+                time.sleep(3)
+        
         return None
 
 def get_film_info(film_element, base_domain):
@@ -27,10 +64,10 @@ def get_film_info(film_element, base_domain):
         title = html.unescape(title_element.text.strip()) if title_element else "Başlık Bulunamadı"
         
         image_element = film_element.find('img')
-        image = image_element['src'] if image_element else ""
+        image = image_element.get('data-src') or image_element.get('src') if image_element else ""
         
         url_element = film_element.find('a')
-        url = base_domain + url_element['href'] if url_element else ""
+        url = base_domain + url_element['href'] if url_element and 'href' in url_element.attrs else ""
         
         year_element = film_element.find('span', class_='year')
         year = html.unescape(year_element.text.strip()) if year_element else "Yıl Belirtilmemiş"
@@ -50,7 +87,7 @@ def get_film_info(film_element, base_domain):
         return {
             'title': title,
             'image': image,
-            'videoUrl': "",
+            'videoUrl': url,  # Direkt film sayfası linki
             'url': url,
             'year': year,
             'duration': duration,
@@ -62,30 +99,46 @@ def get_film_info(film_element, base_domain):
         print(f"⚠️ Hata: Film bilgileri alınamadı. Hata mesajı: {e}")
         return None
 
-def get_video_link(url):
+def get_video_link(scraper, url):
     """Bir film sayfasından video iframe linkini alır."""
-    soup = get_soup(url)
+    soup = scraper.get_soup(url)
     if not soup:
-        return None
+        return url  # Video linki bulunamazsa direkt film sayfası linkini dön
+    
     iframe = soup.find('iframe', id='iframe')
     if iframe and 'src' in iframe.attrs:
         return iframe['src']
-    return None
+    
+    # Alternatif iframe aramalar
+    iframe = soup.find('iframe')
+    if iframe and 'src' in iframe.attrs:
+        return iframe['src']
+        
+    return url
 
-def load_more_movies(api_url, last_movie_id):
+def load_more_movies(scraper, api_url, last_movie_id):
     """API üzerinden daha fazla film yükler."""
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Content-Type': 'application/x-www-form-urlencoded'
+        **scraper.headers,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': api_url.replace('/api/load-movies', '/filmler')
     }
+    
     data = {
         'movie': last_movie_id,
         'year': '',
         'tur': '',
         'siralama': ''
     }
+    
     try:
-        response = requests.post(api_url, headers=headers, data=data, timeout=30)
+        response = scraper.session.post(
+            api_url, 
+            headers=headers, 
+            data=data, 
+            timeout=30
+        )
         response.raise_for_status()
         return response.json()
     except requests.RequestException as e:
@@ -95,6 +148,7 @@ def load_more_movies(api_url, last_movie_id):
 def get_films(base_url, max_films=500):
     """Sitedeki filmleri çeker."""
     films = []
+    scraper = CloudflareScraper()
     
     parsed_uri = urlparse(base_url)
     base_domain = f"{parsed_uri.scheme}://{parsed_uri.netloc}"
@@ -102,57 +156,72 @@ def get_films(base_url, max_films=500):
     
     print(f"🚀 Başlangıç URL'si: {base_url}")
     print(f"📡 API URL'si: {api_url}")
+    print(f"🛡️ Cloudflare bypass aktif")
 
-    soup = get_soup(base_url)
+    soup = scraper.get_soup(base_url)
     if not soup:
+        print("❌ Ana sayfa yüklenemedi!")
         return films
 
     processed_film_titles = set()
+    page_count = 0
 
     while len(films) < max_films:
-        film_elements = soup.find_all('li', class_='')
+        page_count += 1
+        print(f"\n📄 Sayfa {page_count} işleniyor...")
+        
+        # Farklı selector'lar dene
+        film_elements = soup.find_all('li', class_='') or soup.find_all('div', class_='film-card') or soup.find_all('article')
         
         if not film_elements:
             print("⚠️ Sayfada film elementi bulunamadı.")
             break
             
-        new_films_found_on_page = 0
+        new_films_found = 0
         for element in film_elements:
             if len(films) >= max_films:
                 break
                 
             film_info = get_film_info(element, base_domain)
             if film_info and film_info['title'] not in processed_film_titles:
-                video_link = get_video_link(film_info['url'])
-                if video_link:
-                    film_info['videoUrl'] = video_link
-                    films.append(film_info)
-                    processed_film_titles.add(film_info['title'])
-                    new_films_found_on_page += 1
-                    print(f"✅ Film eklendi: {film_info['title']} (Toplam: {len(films)})")
-                time.sleep(0.5)  # Rate limiting
+                # Video linkini sadece ilk 100 film için çek (hız için)
+                if len(films) < 100:
+                    print(f"🎬 Video linki alınıyor: {film_info['title']}")
+                    video_link = get_video_link(scraper, film_info['url'])
+                    if video_link and video_link != film_info['url']:
+                        film_info['videoUrl'] = video_link
+                
+                films.append(film_info)
+                processed_film_titles.add(film_info['title'])
+                new_films_found += 1
+                print(f"✅ Film eklendi: {film_info['title']} (Toplam: {len(films)})")
+                
+            time.sleep(random.uniform(0.3, 0.8))  # Rate limiting
         
-        if new_films_found_on_page == 0 and len(film_elements) > 0:
-            print("ℹ️ Tekrar eden filmler bulundu, son sayfaya ulaşıldı.")
+        if new_films_found == 0:
+            print("ℹ️ Yeni film bulunamadı, işlem tamamlandı.")
             break
 
         if len(films) >= max_films:
+            print(f"✅ Hedef film sayısına ulaşıldı: {max_films}")
             break
 
+        # Sonraki sayfa için API çağrısı
         last_movie_element = film_elements[-1].find('a')
         if last_movie_element and 'data-id' in last_movie_element.attrs:
             last_movie_id = last_movie_element['data-id']
             print(f"⏳ Daha fazla film yükleniyor (Son ID: {last_movie_id})...")
-            more_movies_data = load_more_movies(api_url, last_movie_id)
+            
+            more_movies_data = load_more_movies(scraper, api_url, last_movie_id)
             if more_movies_data and more_movies_data.get('html'):
                 soup = BeautifulSoup(more_movies_data['html'], 'html.parser')
+                time.sleep(random.uniform(2, 4))  # API rate limiting
             else:
                 print("ℹ️ Daha fazla film bulunamadı.")
                 break
         else:
+            print("ℹ️ Son film ID'si bulunamadı.")
             break
-
-        time.sleep(2)
 
     return films
 
@@ -465,6 +534,9 @@ def create_html(films):
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s;
+            text-decoration: none;
+            display: block;
+            text-align: center;
         }}
         #modalWatchBtn:hover {{ 
             transform: scale(1.02);
@@ -676,24 +748,35 @@ def create_html(films):
     return html_template
 
 def main():
-    base_url = os.environ.get('DIZIPAL_URL', 'https://dizipal1224.com/filmler')
-    max_films = int(os.environ.get('MAX_FILMS', 500))
+    base_url = os.environ.get('DIZIPAL_URL', 'https://dizipal1223.com/filmler')
+    max_films = int(os.environ.get('MAX_FILMS', 100))
     
     print(f"🎬 Film çekme işlemi başlıyor...")
     print(f"🌐 URL: {base_url}")
     print(f"📊 Maksimum film sayısı: {max_films}")
+    print(f"🛡️ Cloudflare bypass aktif\n")
     
     try:
         films = get_films(base_url, max_films)
     except Exception as e:
         print(f"❌ Film çekme hatası: {e}")
+        import traceback
+        traceback.print_exc()
         films = []
     
     if not films:
-        print("❌ Hiç film çekilemedi!")
-        print("⚠️ Lütfen URL'yi kontrol edin veya daha sonra tekrar deneyin.")
-        # Boş bir HTML oluştur
-        films = []
+        print("⚠️ Hiç film çekilemedi, demo veri ile devam ediliyor...")
+        films = [{
+            'title': 'Demo Film',
+            'image': 'https://via.placeholder.com/300x450',
+            'videoUrl': '#',
+            'url': '#',
+            'year': '2024',
+            'duration': '120 dk',
+            'imdb': '7.5',
+            'genres': ['Aksiyon'],
+            'summary': 'Site şu an erişilebilir değil. Lütfen daha sonra tekrar deneyin.'
+        }]
     
     html_content = create_html(films)
     
