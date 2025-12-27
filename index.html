@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Film Arşivi - 0 Film</title>
+    <title>Film Arşivi - 1 Film</title>
     <meta name="description" content="Türkçe dublaj ve altyazılı film izleme platformu">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -291,6 +291,9 @@
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s;
+            text-decoration: none;
+            display: block;
+            text-align: center;
         }
         #modalWatchBtn:hover { 
             transform: scale(1.02);
@@ -334,7 +337,7 @@
     <div class="header">
         <div class="logo">
             <h1>🎬 Film Arşivi</h1>
-            <span class="stats">📊 0 Film</span>
+            <span class="stats">📊 1 Film</span>
         </div>
         <div class="controls">
             <select id="genreSelect" onchange="filterByGenre(this.value)">
@@ -376,11 +379,27 @@
     </div>
     <div class="footer">
         <div>⚡ Otomatik olarak güncellenir</div>
-        <div class="update-info">Son Güncelleme: 27/12/2025 12:13</div>
+        <div class="update-info">Son Güncelleme: 27/12/2025 13:29</div>
     </div>
     <script>
-        const films = [];
-        const allGenres = [];
+        const films = [
+  {
+    "title": "Demo Film",
+    "image": "https://via.placeholder.com/300x450",
+    "videoUrl": "#",
+    "url": "#",
+    "year": "2024",
+    "duration": "120 dk",
+    "imdb": "7.5",
+    "genres": [
+      "Aksiyon"
+    ],
+    "summary": "Site şu an erişilebilir değil. Lütfen daha sonra tekrar deneyin."
+  }
+];
+        const allGenres = [
+  "Aksiyon"
+];
         let currentPage = 1;
         const filmsPerPage = 24;
         let currentFilter = { "genre": "", "search": "" };

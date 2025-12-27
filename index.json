@@ -1,1 +1,15 @@
-[]
+[
+  {
+    "title": "Demo Film",
+    "image": "https://via.placeholder.com/300x450",
+    "videoUrl": "#",
+    "url": "#",
+    "year": "2024",
+    "duration": "120 dk",
+    "imdb": "7.5",
+    "genres": [
+      "Aksiyon"
+    ],
+    "summary": "Site şu an erişilebilir değil. Lütfen daha sonra tekrar deneyin."
+  }
+]
