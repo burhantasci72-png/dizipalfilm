@@ -1,34 +1,57 @@
-name: Dizipal Bot Auto Update
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-on:
-  schedule:
-    - cron: '0 */12 * * *' # Her 12 saatte bir çalışır
-  workflow_dispatch: # İstediğinde manuel başlatma butonu
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-      - name: Python Kur
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
+# OS
+.DS_Store
+Thumbs.db
 
-      - name: Kütüphaneleri Yükle
-        run: pip install requests beautifulsoup4
+# Logs
+*.log
 
-      - name: Botu Çalıştır
-        run: python main.py
+# Test files
+test_*.py
+*_test.py
 
-      - name: Güncellenen HTML'i Kaydet
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add index.html
-          git commit -m "Film listesi otomatik güncellendi: $(date)" || exit 0
-          git push
+# Backup files
+*.bak
+*.backup
+
+# Temporary files
+*.tmp
+temp/
+
+# Local configuration
+.env
+config.local.yml
