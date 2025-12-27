@@ -676,7 +676,7 @@ def create_html(films):
     return html_template
 
 def main():
-    base_url = os.environ.get('DIZIPAL_URL', 'https://dizipal1223.com/filmler')
+    base_url = os.environ.get('DIZIPAL_URL', 'https://dizipal1224.com/filmler')
     max_films = int(os.environ.get('MAX_FILMS', 500))
     
     print(f"🎬 Film çekme işlemi başlıyor...")
