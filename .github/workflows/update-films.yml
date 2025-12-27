@@ -21,11 +21,11 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        cache: 'pip'
         
     - name: 📦 Bağımlılıkları yükle
       run: |
-        pip install requests beautifulsoup4
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4 lxml
         
     - name: 🎬 Filmleri çek ve HTML oluştur
       env:
@@ -38,7 +38,8 @@ jobs:
     - name: 📊 İstatistikleri göster
       run: |
         echo "📈 Oluşturulan dosyalar:"
-        ls -lh *.html *.json 2>/dev/null || true
+        ls -lh index.html 2>/dev/null || echo "index.html bulunamadı"
+        ls -lh *.json 2>/dev/null || echo "JSON dosyası bulunamadı"
         
     - name: 💾 Değişiklikleri kaydet
       run: |
@@ -46,3 +47,25 @@ jobs:
         git config --local user.name "github-actions[bot]"
         git add -A
         git diff --quiet && git diff --staged --quiet || (git commit -m "🎬 Film listesi güncellendi - $(date +'%Y-%m-%d %H:%M:%S')" && git push)
+        
+    - name: 📤 GitHub Pages için deploy
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: '.'
+        
+  deploy:
+    needs: update-films
+    runs-on: ubuntu-latest
+    
+    permissions:
+      pages: write
+      id-token: write
+      
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+      
+    steps:
+    - name: 🚀 GitHub Pages'e deploy
+      id: deployment
+      uses: actions/deploy-pages@v4
